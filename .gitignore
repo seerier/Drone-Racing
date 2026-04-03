@@ -1,0 +1,31 @@
+**/logs/*
+**/outputs/*
+**/wandb/*
+
+# Python
+.DS_Store
+**/*.egg-info/
+**/__pycache__/
+**/.pytest_cache/
+**/*.pyc
+**/*.pb
+
+# IDE
+**/.idea/
+**/.vscode/
+
+# RL-Games
+**/runs/*
+**/logs/*
+**/recordings/*
+
+# Slurm
+*.out
+*.err
+
+# Claude
+CLAUDE.md
+.claude
+manual.*
+writeup*
+v*
