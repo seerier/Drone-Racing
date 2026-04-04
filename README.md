@@ -10,11 +10,11 @@
 
 **Side View:**
 
-https://github.com/user-attachments/assets/horizontal_best.mp4
+https://github.com/seerier/Drone-Racing/blob/main/results/horizontal_best.mp4
 
 **Top View:**
 
-https://github.com/user-attachments/assets/vertical_best.mp4
+https://github.com/seerier/Drone-Racing/blob/main/results/vertical_best.mp4
 
 > Local files: [`results/horizontal_best.mp4`](results/horizontal_best.mp4) | [`results/vertical_best.mp4`](results/vertical_best.mp4)
 
