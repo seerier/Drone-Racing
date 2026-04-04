@@ -16,10 +16,10 @@ class QuadcopterPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 25
     experiment_name = "quadcopter_direct"
     empirical_normalization = False
-    wandb_project = "ese651_quadcopter"  # Wandb project name for logging
+    wandb_project = "quadcopter_racing"  # Wandb project name for logging
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=0.8,
-        # Wider actor: 28-dim obs → 256 → 256 → 128 → 4-dim action
+        # Wider actor: 31-dim obs → 256 → 256 → 128 → 4-dim action
         actor_hidden_dims=[256, 256, 128],
         # Deeper critic: better value estimates drive better advantage signals
         critic_hidden_dims=[512, 512, 256, 128],
