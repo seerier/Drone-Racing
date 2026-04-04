@@ -8,13 +8,19 @@
 
 > I trained a PPO agent to race a Crazyflie 2.1 quadrotor through a 7-gate 3D circuit, completing 3 full laps (21 gate passages) at maximum speed. I designed the full RL pipeline from scratch — observation space, reward function, training curricula, and a novel arc maneuver to solve the track's hardest challenge.
 
-**Side View:**
+**Horizontal Bypass Approach:**
 
-https://github.com/seerier/Drone-Racing/blob/main/results/horizontal_best.mp4
+https://github.com/user-attachments/assets/0fb45dd0-1561-4366-ba91-720ac946737b
 
-**Top View:**
 
-https://github.com/seerier/Drone-Racing/blob/main/results/vertical_best.mp4
+
+**Vertical Bypass Approach:**
+
+
+
+https://github.com/user-attachments/assets/26c21cf1-bb23-492f-9b4b-e7d5d7a3c544
+
+
 
 > Local files: [`results/horizontal_best.mp4`](results/horizontal_best.mp4) | [`results/vertical_best.mp4`](results/vertical_best.mp4)
 
