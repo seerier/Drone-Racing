@@ -6,15 +6,15 @@
 ![RL](https://img.shields.io/badge/RL-PPO-blue)
 ![Envs](https://img.shields.io/badge/Parallel%20Envs-8192-orange)
 
-> I trained a PPO agent to race a Crazyflie 2.1 quadrotor through a 7-gate 3D circuit, completing 3 full laps (21 gate passages) at maximum speed. I designed the full RL pipeline from scratch — observation space, reward function, training curricula, and a novel arc maneuver to solve the track's hardest challenge.
+> Built in **NVIDIA Isaac Lab** (Isaac Sim 4.5), I trained a PPO agent to race a Crazyflie 2.1 quadrotor through a 7-gate 3D circuit, completing 3 full laps (21 gate passages) at maximum speed. I designed the full RL pipeline from scratch — observation space, reward function, training curricula, and a novel arc maneuver — with domain randomization for direct sim-to-real transfer.
 
-**Side View:**
+**Horizontal Bypass Approach:**
 
-https://github.com/seerier/Drone-Racing/blob/main/results/horizontal_best.mp4
+https://github.com/user-attachments/assets/0fb45dd0-1561-4366-ba91-720ac946737b
 
-**Top View:**
+**Vertical Bypass Approach:**
 
-https://github.com/seerier/Drone-Racing/blob/main/results/vertical_best.mp4
+https://github.com/user-attachments/assets/26c21cf1-bb23-492f-9b4b-e7d5d7a3c544
 
 > Local files: [`results/horizontal_best.mp4`](results/horizontal_best.mp4) | [`results/vertical_best.mp4`](results/vertical_best.mp4)
 
@@ -24,9 +24,9 @@ https://github.com/seerier/Drone-Racing/blob/main/results/vertical_best.mp4
 
 - **Full circuit completion** -- the agent reliably completes all 21 gate passages (3 laps) at high speed
 - **Solved the shared-gate problem** -- gates 3 and 6 occupy the same physical position but face opposite directions; I designed a 3-waypoint arc maneuver that lets the agent approach from the correct side each time
-- **Massively parallel training** -- 8,192 simultaneous environments at 50 Hz in NVIDIA Isaac Lab
+- **NVIDIA Isaac Lab simulation** -- leverages GPU-accelerated rigid-body physics and parallel rendering to run 8,192 simultaneous environments at 50 Hz on a single GPU
 - **Three-stage curriculum** -- progressively increases domain randomization, approach distance, and speed to enable stable learning from cautious flight to aggressive racing
-- **Sim-to-real ready** -- domain randomization over thrust, drag, and PID gains for robustness to real-world dynamics
+- **Sim-to-real transfer pipeline** -- systematic domain randomization over thrust, drag, and PID gains bridges the simulation-to-reality gap; the trained policy exports to TorchScript/ONNX for onboard deployment on real hardware
 
 ---
 
@@ -34,10 +34,11 @@ https://github.com/seerier/Drone-Racing/blob/main/results/vertical_best.mp4
 
 ### Environment and Task
 
-The environment simulates a Crazyflie 2.1 quadrotor in NVIDIA Isaac Lab with full rigid-body dynamics. The track is a 7-gate "powerloop" circuit; the agent must pass all gates in order for 3 laps.
+The environment is built on **NVIDIA Isaac Lab** (Isaac Sim 4.5), which provides GPU-accelerated rigid-body simulation, parallel scene rendering, and USD-based asset composition. This enables training across 8,192 environments simultaneously on a single GPU — each with independent physics, randomized dynamics, and gate configurations. The track is a 7-gate "powerloop" circuit; the agent must pass all gates in order for 3 laps.
 
 | | |
 |---|---|
+| **Simulation platform** | NVIDIA Isaac Lab (Isaac Sim 4.5) |
 | **Action space** | 4D continuous -- Collective Thrust + Body Rates (CTBR) |
 | **Observation space** | 31-dimensional (ego state, 3-gate lookahead, arc guidance, temporal context) |
 | **Parallel envs** | 8,192 |
@@ -100,7 +101,7 @@ I solved this with a 3-waypoint clockwise arc at constant altitude. The observat
 
 ### Domain Randomization
 
-For sim-to-real robustness, I randomize physical parameters each episode:
+To bridge the gap between Isaac Lab simulation and real-world deployment, I randomize physical parameters each episode. This systematic sim-to-real transfer strategy ensures the trained policy is robust to manufacturing tolerances, battery voltage variations, and environmental disturbances:
 
 | Parameter | Range |
 |---|---|
@@ -243,4 +244,4 @@ python scripts/rsl_rl/play_race.py \
 
 ---
 
-**Tech Stack:** NVIDIA Isaac Lab | PyTorch | PPO (RSL-RL) | Crazyflie 2.1
+**Tech Stack:** NVIDIA Isaac Lab (Isaac Sim 4.5) | PyTorch | PPO (RSL-RL) | USD Scene Composition | Crazyflie 2.1
