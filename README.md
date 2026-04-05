@@ -21,7 +21,7 @@ https://github.com/user-attachments/assets/e2a53d59-dc04-474b-be40-fd2a3bbf1dff
 https://github.com/user-attachments/assets/20d34114-196e-410d-8120-a9f9068dbfe0
 
 
-> Local files: [`results/horizontal_best.mp4`](results/horizontal_best.mp4) | [`results/vertical_best.mp4`](results/vertical_best.mp4)
+> Local files: [`results/horizontal.mp4`](results/horizontal.mp4) | [`results/vertical.mp4`](results/vertical.mp4)
 
 ---
 
