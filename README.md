@@ -6,7 +6,7 @@
 ![RL](https://img.shields.io/badge/RL-PPO-blue)
 ![Envs](https://img.shields.io/badge/Parallel%20Envs-8192-orange)
 
-> Built in **NVIDIA Isaac Lab** (Isaac Sim 4.5), I trained a PPO agent to race a Crazyflie 2.1 quadrotor through a 7-gate 3D circuit, completing 3 full laps (21 gate passages) at maximum speed. I designed the full RL pipeline from scratch — observation space, reward function, training curricula, and a novel arc maneuver — with domain randomization for direct sim-to-real transfer.
+> I designed a complete reinforcement learning pipeline -- observation space, multi-component reward function, three-stage curriculum, and a novel arc maneuver -- to train a PPO agent that races a Crazyflie 2.1 quadrotor through a 7-gate 3D circuit, completing 3 full laps (21 gate passages) at maximum speed. Built in NVIDIA Isaac Lab with 8,192 parallel environments and domain randomization for policy robustness, designed for future sim-to-real deployment. This project tackles a core challenge in embodied AI: designing RL systems that produce agile, robust behavior for autonomous agents operating in complex 3D environments.
 
 **Horizontal Bypass Approach:**
 
@@ -24,9 +24,9 @@ https://github.com/user-attachments/assets/26c21cf1-bb23-492f-9b4b-e7d5d7a3c544
 
 - **Full circuit completion** -- the agent reliably completes all 21 gate passages (3 laps) at high speed
 - **Solved the shared-gate problem** -- gates 3 and 6 occupy the same physical position but face opposite directions; I designed a 3-waypoint arc maneuver that lets the agent approach from the correct side each time
-- **NVIDIA Isaac Lab simulation** -- leverages GPU-accelerated rigid-body physics and parallel rendering to run 8,192 simultaneous environments at 50 Hz on a single GPU
-- **Three-stage curriculum** -- progressively increases domain randomization, approach distance, and speed to enable stable learning from cautious flight to aggressive racing
-- **Sim-to-real transfer pipeline** -- systematic domain randomization over thrust, drag, and PID gains bridges the simulation-to-reality gap; the trained policy exports to TorchScript/ONNX for onboard deployment on real hardware
+- **10-component reward function** -- mixed sparse gate-passage signals with dense shaping terms, carefully balancing exploration incentives and penalty schedules to avoid reward hacking
+- **Three-stage curriculum** -- independently schedules domain randomization, approach distance, and speed scaling, each progressing at its natural rate to avoid cascading instability
+- **Robustness via domain randomization** -- systematic randomization of thrust, drag, and PID gains across 8,192 parallel environments in Isaac Lab, designed for future sim-to-real transfer
 
 ---
 
@@ -70,7 +70,7 @@ I designed a 10-component reward function from scratch, mixing sparse gate-passa
 | Crash penalty | -0.5 | Triggered when contact force > 1e-8 N | Per-timestep contact penalty |
 | Wrong-side proximity | -0.5 | Dense penalty for approaching gate from exit side | Gentle nudge (reduced from -2.0) to avoid creating a fear barrier at gate planes |
 | Exit-side repulsion | -0.5 | Repulsive field near exit side of ALL gates | Prevents brush-and-turn exploits at gates 2→3 and elsewhere |
-| Action smoothness | -0.03 | `-0.03 × ||a_t - a_{t-1}||` (added directly) | Reduces actuator jitter for sim-to-real transfer robustness |
+| Action smoothness | -0.03 | `-0.03 × ||a_t - a_{t-1}||` (added directly) | Reduces actuator jitter for policy robustness |
 
 **Terminal Rewards**
 
@@ -101,7 +101,7 @@ I solved this with a 3-waypoint clockwise arc at constant altitude. The observat
 
 ### Domain Randomization
 
-To bridge the gap between Isaac Lab simulation and real-world deployment, I randomize physical parameters each episode. This systematic sim-to-real transfer strategy ensures the trained policy is robust to manufacturing tolerances, battery voltage variations, and environmental disturbances:
+To ensure the trained policy is robust to manufacturing tolerances, battery voltage variations, and environmental disturbances, I randomize physical parameters each episode. This domain randomization strategy is designed for future sim-to-real transfer to real Crazyflie hardware:
 
 | Parameter | Range |
 |---|---|
