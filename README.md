@@ -10,11 +10,16 @@
 
 **Horizontal Bypass Approach:**
 
-https://github.com/user-attachments/assets/0fb45dd0-1561-4366-ba91-720ac946737b
+
+https://github.com/user-attachments/assets/e2a53d59-dc04-474b-be40-fd2a3bbf1dff
+
 
 **Vertical Bypass Approach:**
 
-https://github.com/user-attachments/assets/26c21cf1-bb23-492f-9b4b-e7d5d7a3c544
+
+
+https://github.com/user-attachments/assets/20d34114-196e-410d-8120-a9f9068dbfe0
+
 
 > Local files: [`results/horizontal_best.mp4`](results/horizontal_best.mp4) | [`results/vertical_best.mp4`](results/vertical_best.mp4)
 
