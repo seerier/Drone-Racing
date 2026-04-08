@@ -86,9 +86,14 @@ def main():
 
     if args_cli.follow_robot == -1:
         env_cfg.viewer.resolution = (1920, 1080)
-        # Side view: diagonal forward-down angle showing all gates with depth
-        env_cfg.viewer.eye = (7.5, -7.0, 4.5)
-        env_cfg.viewer.lookat = (-0.5, 1.0, 0.75)
+        # Circle track (Phase 2 Stage 1): diagonal front-right-up view of the
+        # 4-gate circle centered at (0, 4.5, ~1.0). All four gates and the
+        # raised gate at (0, 6, 1.75) fit in frame at this distance.
+        env_cfg.viewer.eye    = (5.0, -0.5, 3.5)
+        env_cfg.viewer.lookat = (0.0,  4.5, 1.0)
+        # --- Phase 1 powerloop view (kept for reference) ---
+        # env_cfg.viewer.eye    = (7.5, -7.0, 4.5)
+        # env_cfg.viewer.lookat = (-0.5, 1.0, 0.75)
     elif args_cli.follow_robot >= 0:
         env_cfg.viewer.eye = (-0.8, 0.8, 0.8)
         env_cfg.viewer.resolution = (1920, 1080)
