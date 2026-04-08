@@ -19,8 +19,9 @@ class QuadcopterPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     wandb_project = "quadcopter_racing"  # Wandb project name for logging
     policy = RslRlPpoActorCriticCfg(
         init_noise_std=0.8,
-        # Wider actor: 31-dim obs → 256 → 256 → 128 → 4-dim action
-        actor_hidden_dims=[256, 256, 128],
+        # Actor: 36-dim obs → 512 → 512 → 256 → 128 → 4-dim action
+        # Matches stock controller_simple_policy.py for sim2real deployment.
+        actor_hidden_dims=[512, 512, 256, 128],
         # Deeper critic: better value estimates drive better advantage signals
         critic_hidden_dims=[512, 512, 256, 128],
         activation="elu",

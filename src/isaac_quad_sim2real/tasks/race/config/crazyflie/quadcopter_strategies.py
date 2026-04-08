@@ -403,96 +403,64 @@ class DefaultQuadcopterStrategy:
         return reward
 
     def get_observations(self) -> Dict[str, torch.Tensor]:
-        """Get observations. Read reset_idx() and quadcopter_env.py to see which drone info is extracted from the sim.
-        The following code is an example. You should delete it or heavily modify it once you begin the racing task."""
+        """36-dim Vineet observation: matches stock controller_simple_policy.py.
+
+        Layout: lin_vel_b(3) + R_drone_flat(9) + corners_curr(12) + corners_next(12) = 36
+
+        We deliberately do NOT update self.env._previous_actions / _previous_yaw
+        / _yaw_n_laps here — that bookkeeping happens elsewhere in the env step
+        and is consumed by the action_smoothness reward.
+        """
 
         # TODO ----- START ----- Define tensors for your observation space. Be careful with frame transformations
 
-        # Body-frame linear velocity: direct speed/direction signal for thrust control
-        drone_lin_vel_b = self.env._robot.data.root_com_lin_vel_b   # (N, 3)
+        # --- self state ---
+        drone_lin_vel_b = self.env._robot.data.root_com_lin_vel_b           # (N, 3)
+        quat_w          = self.env._robot.data.root_quat_w                  # (N, 4)
+        rot_mat         = matrix_from_quat(quat_w)                          # (N, 3, 3)
 
-        # Body-frame angular velocity (body rates): essential for attitude stabilization
-        drone_ang_vel_b = self.env._robot.data.root_ang_vel_b       # (N, 3)
+        # --- gate corner geometry, in body frame ---
+        num_gates    = self.env._waypoints.shape[0]
+        curr_idx     = self.env._idx_wp % num_gates                         # (N,)
+        next_idx     = (self.env._idx_wp + 1) % num_gates                   # (N,)
 
-        # Gravity vector projected into body frame: encodes roll and pitch tilt compactly.
-        rot_mat_obs = matrix_from_quat(self.env._robot.data.root_quat_w)  # (N, 3, 3)
-        gravity_b = -rot_mat_obs[:, 2, :]                                  # (N, 3)
+        wp_curr_pos  = self.env._waypoints[curr_idx, :3]                    # (N, 3)
+        wp_next_pos  = self.env._waypoints[next_idx, :3]                    # (N, 3)
+        quat_curr    = self.env._waypoints_quat[curr_idx]                   # (N, 4)
+        quat_next    = self.env._waypoints_quat[next_idx]                   # (N, 4)
+        rot_curr     = matrix_from_quat(quat_curr)                          # (N, 3, 3)
+        rot_next     = matrix_from_quat(quat_next)                          # (N, 3, 3)
 
-        # Current target gate: drone position in gate's local frame.
-        drone_pos_gate_frame = self.env._pose_drone_wrt_gate          # (N, 3)
+        env_origins  = self.env._terrain.env_origins.unsqueeze(1)           # (N, 1, 3)
+        verts_curr_w = (
+            torch.bmm(self.env._local_square, rot_curr.transpose(1, 2))
+            + wp_curr_pos.unsqueeze(1)
+            + env_origins
+        )  # (N, 4, 3)
+        verts_next_w = (
+            torch.bmm(self.env._local_square, rot_next.transpose(1, 2))
+            + wp_next_pos.unsqueeze(1)
+            + env_origins
+        )  # (N, 4, 3)
 
-        # Next gate look-ahead (gate+1): lets the policy plan smooth racing lines
-        num_gates_obs = self.env._waypoints.shape[0]
-        next_gate_idx = (self.env._idx_wp + 1) % num_gates_obs
-        drone_pos_next_gate_frame, _ = subtract_frame_transforms(
-            self.env._waypoints[next_gate_idx, :3],
-            self.env._waypoints_quat[next_gate_idx, :],
-            self.env._robot.data.root_link_pos_w,
-        )  # (N, 3)
+        drone_pos_w = self.env._robot.data.root_link_pos_w                  # (N, 3)
+        pos_rep     = drone_pos_w.repeat_interleave(4, dim=0)               # (4N, 3)
+        quat_rep    = quat_w.repeat_interleave(4, dim=0)                    # (4N, 4)
 
-        # Second look-ahead (gate+2): critical for horizontal arc setup and chicane planning
-        next_next_gate_idx = (self.env._idx_wp + 2) % num_gates_obs
-        drone_pos_next_next_gate_frame, _ = subtract_frame_transforms(
-            self.env._waypoints[next_next_gate_idx, :3],
-            self.env._waypoints_quat[next_next_gate_idx, :],
-            self.env._robot.data.root_link_pos_w,
-        )  # (N, 3)
-
-        # Gate normal direction in body frame: tells agent which direction to fly through gate.
-        # Essential for disambiguating gates 3 vs 6 (same physical gate, opposite directions).
-        gate_normal_w = -self.env._normal_vectors[self.env._idx_wp]  # (N, 3) negated: points in traversal direction
-        gate_normal_b = torch.bmm(
-            rot_mat_obs.transpose(1, 2), gate_normal_w.unsqueeze(-1)
-        ).squeeze(-1)  # (N, 3)
-
-        # Scalar distance to current gate: easier for value function estimation
-        dist_to_gate = torch.linalg.norm(
-            self.env._pose_drone_wrt_gate, dim=1, keepdim=True
-        )  # (N, 1)
-
-        # Height above ground: helps takeoff from ground starts and avoid floor crashes
-        height = self.env._robot.data.root_link_pos_w[:, 2:3]  # (N, 1)
-
-        # Lap progress: fraction through current lap for value estimation over 3-lap horizon
-        lap_progress = (
-            (self.env._n_gates_passed.float() % num_gates_obs) / num_gates_obs
-        ).unsqueeze(-1)  # (N, 1)
-
-        # Previous policy outputs (CTBR): temporal context for smooth control
-        prev_actions = self.env._previous_actions                     # (N, 4)
-
-        # Velocity toward current gate (scalar): helps policy optimize approach speed
-        vel_toward_gate_obs = torch.sum(
-            drone_lin_vel_b * gate_normal_b, dim=1, keepdim=True
-        )  # (N, 1)
-
-        # Arc phase indicator: normalized to [0, 1], disambiguates horizontal arc position
-        arc_phase_obs = (self._arc_phase.float() / 3.0).unsqueeze(-1)  # (N, 1)
-
-        # Normalized episode time: helps value function estimate remaining time budget
-        episode_time_frac = (
-            self.env.episode_length_buf.float() / self.env.max_episode_length
-        ).unsqueeze(-1)  # (N, 1)
+        corners_b_curr, _ = subtract_frame_transforms(pos_rep, quat_rep, verts_curr_w.view(-1, 3))
+        corners_b_next, _ = subtract_frame_transforms(pos_rep, quat_rep, verts_next_w.view(-1, 3))
+        corners_b_curr = corners_b_curr.view(self.num_envs, 12)             # (N, 12)
+        corners_b_next = corners_b_next.view(self.num_envs, 12)             # (N, 12)
 
         # TODO ----- END -----
 
         obs = torch.cat(
             # TODO ----- START ----- List your observation tensors here to be concatenated together
             [
-                drone_lin_vel_b,                # 3  body-frame linear velocity
-                drone_ang_vel_b,                # 3  body-frame angular velocity
-                gravity_b,                      # 3  gravity in body frame
-                drone_pos_gate_frame,           # 3  drone pos in current gate frame
-                drone_pos_next_gate_frame,      # 3  drone pos in next gate frame
-                drone_pos_next_next_gate_frame, # 3  drone pos in gate+2 frame
-                gate_normal_b,                  # 3  gate normal in body frame
-                dist_to_gate,                   # 1  scalar distance to gate
-                height,                         # 1  altitude
-                lap_progress,                   # 1  fraction through current lap
-                prev_actions,                   # 4  previous CTBR output
-                vel_toward_gate_obs,            # 1  velocity toward gate (scalar)
-                arc_phase_obs,                  # 1  arc phase indicator [0, 1]
-                episode_time_frac,              # 1  normalized episode time
+                drone_lin_vel_b,                       # 3   body-frame linear velocity
+                rot_mat.view(self.num_envs, 9),        # 9   drone rotation matrix (flattened)
+                corners_b_curr,                        # 12  4 corners of current gate, body frame
+                corners_b_next,                        # 12  4 corners of next gate,    body frame
             ],
             # TODO ----- END -----
             dim=-1,

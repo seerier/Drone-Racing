@@ -33,5 +33,17 @@ website_listing.md
 website_page.md
 README_refined.md
 writeup.md
-RESUME*
-internship*
+Manuals
+
+# sim2real: TA deployment infra. Only track files we actually edit.
+sim2real/*
+!sim2real/src/
+sim2real/src/*
+!sim2real/src/controller/
+sim2real/src/controller/*
+!sim2real/src/controller/controller/
+sim2real/src/controller/controller/*
+!sim2real/src/controller/controller/controller_simple_policy.py
+!sim2real/bin/
+sim2real/bin/*
+!sim2real/bin/process_bag_with_br_pos_export.py

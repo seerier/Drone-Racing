@@ -128,7 +128,7 @@ class GateModelCfg:
 @configclass
 class QuadcopterEnvCfg(DirectRLEnvCfg):
     use_wall = False
-    track_name = 'powerloop'
+    track_name = 'circle'
 
     # env
     episode_length_s = 30.0             # episode_length = episode_length_s / dt / decimation
@@ -188,7 +188,7 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
         # filter_prim_paths_expr=["/World/envs/env_.*/Wall"],
     )
 
-    beta = 1.0         # 1.0 for no smoothing, 0.0 for no update
+    beta = 1.0         # 1.0 = no sim-side action filter (deployed controller has none either, avoid sim2real gap)
 
     # Reset variables
     min_altitude = 0.1
@@ -214,8 +214,8 @@ class QuadcopterEnvCfg(DirectRLEnvCfg):
     kd_omega_y = 0.0
     i_limit_y = 166.7
 
-    body_rate_scale_xy = 100.0 * D2R
-    body_rate_scale_z = 200.0 * D2R
+    body_rate_scale_xy = 40.0 * D2R   # Stage 1 slow/safe: was 100°/s
+    body_rate_scale_z  = 80.0 * D2R   # Stage 1 slow/safe: was 200°/s
 
     # Parameters from train.py or play.py
     is_train = None
@@ -429,7 +429,13 @@ class QuadcopterEnv(DirectRLEnv):
                 [ 1.5, 7.00, 0.75, 0.0, 0.0,  1.57],
                 [ 0.0, 5.25, 1.50, 0.0, 0.0,  0.00],
                 [-2.0, 3.50, 0.75, 0.0, 0.0,  1.57],
-            ]
+            ],
+            'circle': [
+                [ 0.0, 3.0, 0.75, 0.0, 0.0,  0.00],
+                [-1.5, 4.5, 0.75, 0.0, 0.0, -1.57],
+                [ 0.0, 6.0, 1.75, 0.0, 0.0,  3.14],
+                [ 1.5, 4.5, 0.75, 0.0, 0.0,  1.57],
+            ],
         }
 
         self._waypoints = torch.tensor(tracks[self.cfg.track_name], device=self.device)
