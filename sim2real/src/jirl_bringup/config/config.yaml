@@ -1,0 +1,77 @@
+# Controller
+/*/controller:
+  ros__parameters:
+    crazyradio_driver:
+      enable: False
+      crazyflie_names:
+        - crazy_jirl_b1
+        - crazy_jirl_b4
+        - crazy_jirl_b2
+        - crazy_jirl_b3
+      crazyradio_uris:
+        - radio://0/80/2M/E7E7E701B1
+        - radio://0/89/2M/E7E7E701B4
+        - radio://1/100/2M/E7E7E701B2
+        - radio://1/86/2M/E7E7E701B3
+      ext_driver: py   # cpp or python
+    gate_side: 1.0
+    low_level_controller:
+      c1: -0.6709
+      c2: 0.1932
+      c3: 13.0652
+      thrust_pwm_min: 10001
+      thrust_pwm_max: 60000
+    policy:
+      # Drone-specific policy paths (required for each drone)
+      paths_per_drone:
+        crazy_jirl_b1: /home/neo/workspace/logs/policies/phase2circle/Safer/best_model.pt
+        crazy_jirl_b2: /home/neo/workspace/logs/policies/phase2circle/Safer/best_model.pt
+        crazy_jirl_b3: /home/neo/workspace/logs/policies/phase2circle/Safer/best_model.pt
+        crazy_jirl_b4: /home/neo/workspace/logs/policies/phase2circle/Safer/best_model.pt
+
+
+      max_pitch_br: 100.0
+      max_roll_br: 100.0
+      max_yaw_br: 200.0
+
+      waypoints: [
+         0.0, 3.0, 0.75, 0.0, 0.0,  0.0,
+        -1.5, 4.5, 0.75, 0.0, 0.0, -1.57,
+         0.0, 6.0, 1.75, 0.0, 0.0,  3.14,
+         1.5, 4.5, 0.75, 0.0, 0.0,  1.57
+      ]
+      initial_waypoint: 0
+    takeoff_height: 0.01
+
+# Crazyradio driver
+/crazyradio_driver:
+  ros__parameters:
+    crazyflie_names:
+      - crazy_jirl_b1
+      - crazy_jirl_b4
+      - crazy_jirl_b2
+      - crazy_jirl_b3
+    crazyradio_uris:
+      - radio://0/80/2M/E7E7E701B1
+      - radio://0/89/2M/E7E7E701B4
+      - radio://1/100/2M/E7E7E701B2
+      - radio://1/86/2M/E7E7E701B3
+    logger_period_ms: 1000
+    reconnection_period_ms: 2000
+
+# Vicon
+/vicon_node:
+  ros__parameters:
+    server_address: 192.168.8.2  #mocap.perch
+    frame_rate: 120
+    max_accel: 10.0
+    publish_tf: true
+    publish_pts: false
+    fixed_frame_id: mocap
+    timer_single_pub_freq: 100
+    timer_multi_pub_freq: 100
+    model_list:
+      - crazy_jirl_b1
+      - crazy_jirl_b4
+      - crazy_jirl_b2
+      - crazy_jirl_b3

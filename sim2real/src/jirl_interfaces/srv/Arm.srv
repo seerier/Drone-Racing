@@ -1,0 +1,8 @@
+int8 ARM = 0
+int8 DISARM = 1
+
+string crazyflie_name
+int8 command
+
+---
+bool success
