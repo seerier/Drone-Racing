@@ -86,9 +86,10 @@ def main():
 
     if args_cli.follow_robot == -1:
         env_cfg.viewer.resolution = (1920, 1080)
-        # Side view: diagonal forward-down angle showing all gates with depth
-        env_cfg.viewer.eye = (7.5, -7.0, 4.5)
-        env_cfg.viewer.lookat = (-0.5, 1.0, 0.75)
+        # Top-side view: elevated angle showing all circle track gates
+        # Circle track centered around (0, 4.5, 1.0)
+        env_cfg.viewer.eye = (8.0, 4.5, 7.0)
+        env_cfg.viewer.lookat = (0.0, 4.5, 0.75)
     elif args_cli.follow_robot >= 0:
         env_cfg.viewer.eye = (-0.8, 0.8, 0.8)
         env_cfg.viewer.resolution = (1920, 1080)

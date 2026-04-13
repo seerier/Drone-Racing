@@ -25,7 +25,7 @@ class Actor(nn.Module):
         return self.actor(x)
 
 class SimpleRacingPolicy:
-    def __init__(self, vehicle, model_path, params, device="cpu"):
+    def __init__(self, vehicle, model_path, params, device="cpu", **kwargs):
         self.quadrotor = vehicle
         self.device = torch.device(device)
         self.obs_dim = 3 + 9 + 12 + 12
@@ -61,11 +61,13 @@ class SimpleRacingPolicy:
         self.idx_wp = params["initial_waypoint"]
 
 
-        # Set the maximum body rate on each axis (this is hand selected), rad/s
-        self.max_roll_br = params["max_roll_br"]
-        self.max_pitch_br = params["max_pitch_br"]
-        self.max_yaw_br = params["max_yaw_br"]
-        self.pass_gate_thr = params.get("pass_gate_thr", 0.10)  # Default value if not in params
+        # Set the maximum body rate on each axis (deg/s, matching sim's body_rate_scale)
+        # Sim: body_rate_scale_xy = 100*D2R rad/s = 100 deg/s, body_rate_scale_z = 200 deg/s
+        # Crazyflie's crtpRateSetpoint expects deg/s, so these must be in deg/s
+        self.max_roll_br = params.get("max_roll_br", 100.0)
+        self.max_pitch_br = params.get("max_pitch_br", 100.0)
+        self.max_yaw_br = params.get("max_yaw_br", 200.0)
+        self.pass_gate_thr = params.get("pass_gate_thr", 0.10)
 
     def update(self, state):
         """
