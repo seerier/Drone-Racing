@@ -86,10 +86,17 @@ def main():
 
     if args_cli.follow_robot == -1:
         env_cfg.viewer.resolution = (1920, 1080)
-        # Top-side view: elevated angle showing all circle track gates
-        # Circle track centered around (0, 4.5, 1.0)
-        env_cfg.viewer.eye = (8.0, 4.5, 7.0)
-        env_cfg.viewer.lookat = (0.0, 4.5, 0.75)
+        # # Circle track: centered around (0, 4.5, 1.0)
+        # env_cfg.viewer.eye = (8.0, 4.5, 7.0)
+        # env_cfg.viewer.lookat = (0.0, 4.5, 0.75)
+
+        # Powerloop track: symmetric about y=0, spans y∈[-3.5, 3.5], z∈[0.75, 2.0].
+        # Side-elevated overhead view (~54° above horizontal) from +x side.
+        # Camera is close to the arc region so the gate-3/6 horizontal sweep
+        # (x≈0.6–1.8, z=0.75) is clearly visible from above; all 7 gates and
+        # the vertical gates 1,4 (z=2.0) remain in frame.
+        env_cfg.viewer.eye = (6.5, 0.0, 9.0)
+        env_cfg.viewer.lookat = (0.0, 0.0, 1.0)
     elif args_cli.follow_robot >= 0:
         env_cfg.viewer.eye = (-0.8, 0.8, 0.8)
         env_cfg.viewer.resolution = (1920, 1080)
