@@ -18,7 +18,7 @@ https://github.com/user-attachments/assets/87ce08ea-6633-47c1-8a01-a9de1610ed7a
 
 
 
-> Click the image above to view the flight, or open [`results/powerloop.mp4`](results/powerloop.mp4) directly. To embed an inline player on GitHub, drag `results/powerloop.mp4` into the README editor on github.com and paste the generated `user-attachments` URL here.
+> Local file: [`results/powerloop.mp4`](results/powerloop.mp4)
 
 **Sim videos -- Horizontal Bypass Approach:**
 
