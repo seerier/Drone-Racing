@@ -12,7 +12,11 @@
 
 The same policy trained in Isaac Lab transfers directly to a physical Crazyflie 2.1 quadrotor, flying the full 7-gate powerloop circuit -- including the shared-gate arc maneuver -- with no real-world fine-tuning. Onboard PID accepts collective-thrust + body-rate commands at 50 Hz from the policy network; observations are reconstructed from VICON motion-capture state in the 36D Vineet body-frame format used during training.
 
-[![Real-world powerloop deployment](results/featured.png)](results/powerloop.mp4)
+
+
+https://github.com/user-attachments/assets/87ce08ea-6633-47c1-8a01-a9de1610ed7a
+
+
 
 > Click the image above to view the flight, or open [`results/powerloop.mp4`](results/powerloop.mp4) directly. To embed an inline player on GitHub, drag `results/powerloop.mp4` into the README editor on github.com and paste the generated `user-attachments` URL here.
 
