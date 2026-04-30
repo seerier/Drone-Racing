@@ -6,7 +6,7 @@
 ![RL](https://img.shields.io/badge/RL-PPO-blue)
 ![Envs](https://img.shields.io/badge/Parallel%20Envs-8192-orange)
 
-> I designed a complete reinforcement learning pipeline -- observation space, multi-component reward function, three-stage curriculum, and a novel arc maneuver -- to train a PPO agent that races a Crazyflie 2.1 quadrotor through a 7-gate 3D circuit, completing 3 full laps (21 gate passages) at maximum speed. Built in NVIDIA Isaac Lab with 8,192 parallel environments and domain randomization for policy robustness, then **deployed zero-shot to a real Crazyflie 2.1 at Pennovation**. This project tackles a core challenge in embodied AI: designing RL systems that produce agile, robust behavior for autonomous agents operating in complex 3D environments.
+> I designed a complete reinforcement learning pipeline -- observation space, multi-component reward function, three-stage curriculum, and a novel arc maneuver -- to train a PPO agent that races a Crazyflie 2.1 quadrotor through a 7-gate 3D circuit, completing 3 full laps (21 gate passages) at maximum speed. Built in NVIDIA Isaac Lab with 8,192 parallel environments and domain randomization for policy robustness, then **deployed zero-shot to a real Crazyflie 2.1**. This project tackles a core challenge in embodied AI: designing RL systems that produce agile, robust behavior for autonomous agents operating in complex 3D environments.
 
 ## Real-World Deployment (Stage 3)
 
@@ -39,7 +39,7 @@ https://github.com/user-attachments/assets/20d34114-196e-410d-8120-a9f9068dbfe0
 - **Solved the shared-gate problem** -- gates 3 and 6 occupy the same physical position but face opposite directions; I designed a 3-waypoint arc maneuver that lets the agent approach from the correct side each time
 - **10-component reward function** -- mixed sparse gate-passage signals with dense shaping terms, carefully balancing exploration incentives and penalty schedules to avoid reward hacking
 - **Three-stage curriculum** -- independently schedules domain randomization, approach distance, and speed scaling, each progressing at its natural rate to avoid cascading instability
-- **Zero-shot sim-to-real transfer** -- the trained policy flies a physical Crazyflie 2.1 through the full powerloop circuit at Pennovation without any real-world fine-tuning, enabled by domain randomization of thrust, drag, and PID gains across 8,192 parallel environments in Isaac Lab
+- **Zero-shot sim-to-real transfer** -- the trained policy flies a physical Crazyflie 2.1 through the full powerloop circuit without any real-world fine-tuning, enabled by domain randomization of thrust, drag, and PID gains across 8,192 parallel environments in Isaac Lab
 
 ---
 
