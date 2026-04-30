@@ -86,9 +86,23 @@ def main():
 
     if args_cli.follow_robot == -1:
         env_cfg.viewer.resolution = (1920, 1080)
-        # Side view: diagonal forward-down angle showing all gates with depth
+        # # Circle track: centered around (0, 4.5, 1.0)
+        # env_cfg.viewer.eye = (8.0, 4.5, 7.0)
+        # env_cfg.viewer.lookat = (0.0, 4.5, 0.75)
+
+        # Powerloop track: symmetric about y=0, spans y∈[-3.5, 3.5], z∈[0.75, 2.0].
+        # Phase-1 tuned diagonal view (from main branch): shows all 7 gates
+        # with depth, distance ≈11m from origin.
         env_cfg.viewer.eye = (7.5, -7.0, 4.5)
         env_cfg.viewer.lookat = (-0.5, 1.0, 0.75)
+
+        # # Overhead view (~54° from horizontal):
+        # env_cfg.viewer.eye = (6.5, 0.0, 9.0)
+        # env_cfg.viewer.lookat = (0.0, 0.0, 1.0)
+
+        # # Zoomed gate-3 / arc view:
+        # env_cfg.viewer.eye = (4.5, 2.5, 4.0)
+        # env_cfg.viewer.lookat = (0.8, 0.0, 0.75)
     elif args_cli.follow_robot >= 0:
         env_cfg.viewer.eye = (-0.8, 0.8, 0.8)
         env_cfg.viewer.resolution = (1920, 1080)

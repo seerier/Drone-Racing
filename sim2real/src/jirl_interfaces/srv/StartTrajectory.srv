@@ -1,0 +1,23 @@
+# Available trajectories
+int8 CIRCLE = 0
+
+int8 trajectory_type
+
+# Circular trajectory data
+int8 DIR_CW = 0
+int8 DIR_CCW = 1
+
+int8 PLANE_XY = 0
+int8 PLANE_XZ = 1
+int8 PLANE_YZ = 2
+
+float64 radius
+float64 freq
+float64 duration
+bool direction
+int8 plane
+
+# Other trajectories data...
+
+---
+bool success

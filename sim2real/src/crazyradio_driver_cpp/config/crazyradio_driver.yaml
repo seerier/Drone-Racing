@@ -1,0 +1,7 @@
+/crazyradio_driver:
+  ros__parameters:
+    crazyflie_names:
+      - crazy_jirl_02
+    crazyflie_uris:
+      - radio://0/83/2M/E7E7E70102
+    reconnection_period_ms: 1000

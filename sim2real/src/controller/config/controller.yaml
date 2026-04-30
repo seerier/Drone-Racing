@@ -1,0 +1,13 @@
+/**:
+  ros__parameters:
+    low_level_controller:
+      c1: -0.6709
+      c2: 0.1932
+      c3: 13.0652
+      thrust_pwm_min: 10001
+      thrust_pwm_max: 60000
+    policy:
+      enable: false
+      path: /home/neo/workspace/logs/policies/2025-03-04_01-02-56/model_4999.pt
+    takeoff_height: 1.0
+

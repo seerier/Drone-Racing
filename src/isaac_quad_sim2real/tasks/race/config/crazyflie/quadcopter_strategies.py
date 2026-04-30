@@ -207,6 +207,7 @@ class DefaultQuadcopterStrategy:
                 new_pose, dim=1
             )
 
+            # Arc distance override enabled for powerloop (gates 3 & 6 colocated)
             # Horizontal arc: for envs that just advanced to gate 3, override
             # _last_distance_to_goal to use ARC_WP1 so the progress reward
             # guides the drone into the clockwise horizontal arc.
@@ -222,7 +223,13 @@ class DefaultQuadcopterStrategy:
         # Update prev_x for envs that did NOT just pass a gate
         self.env._prev_x_drone_wrt_gate[~gate_passed] = curr_x[~gate_passed]
 
-        # --- Three-phase horizontal arc waypoints ---
+        # --- Arc maneuver enabled for powerloop (gates 3 & 6 colocated) ---
+        # The arc logic below is specific to the powerloop track where gates 3&6
+        # share the same position. For other tracks (e.g. circle) with no
+        # colocated gates, `in_arc` stays False and these overrides are no-ops.
+        # in_arc = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
+
+        # --- Three-phase horizontal arc waypoints (powerloop only) ---
         # After gate 2 exit (drone at Y<0), sweep clockwise at Z≈0.75
         # to gate 3's approach side (Y>0). Three waypoints guide the arc:
         #   WP1: pull rightward into arc start
@@ -259,7 +266,9 @@ class DefaultQuadcopterStrategy:
         phase_just_advanced = in_arc & (self._arc_phase > self._prev_arc_phase)
 
         # --- Dense potential-based progress reward ---
+        # Straight-line distance to current target gate
         dist_to_gate = torch.linalg.norm(self.env._pose_drone_wrt_gate, dim=1)
+        # Arc overrides (powerloop only):
         if in_arc_phase1.any():
             dist_to_gate[in_arc_phase1] = torch.linalg.norm(
                 drone_pos_w_all[in_arc_phase1] - arc_wp1.unsqueeze(0), dim=1)
@@ -277,13 +286,15 @@ class DefaultQuadcopterStrategy:
             self.env._last_distance_to_goal[phase_just_advanced] = dist_to_gate[phase_just_advanced]
 
         progress = (self.env._last_distance_to_goal - dist_to_gate).clamp(-5.0, 5.0)
-        # Symmetric 1.5x arc boost: backtracking IS penalized (no ratchet exploit)
+        # Symmetric 1.5x arc boost (powerloop only):
         if in_arc.any():
             progress[in_arc] = progress[in_arc] * 1.5
         self.env._last_distance_to_goal = dist_to_gate.clone()
 
         # --- Velocity-toward-gate reward ---
+        # Direction from drone to current target gate in world frame
         gate_pos_w = self.env._waypoints[self.env._idx_wp, :3].clone()
+        # Arc overrides (powerloop only):
         if in_arc_phase1.any():
             gate_pos_w[in_arc_phase1] = arc_wp1.unsqueeze(0)
         if in_arc_phase2.any():
@@ -408,96 +419,69 @@ class DefaultQuadcopterStrategy:
 
         # TODO ----- START ----- Define tensors for your observation space. Be careful with frame transformations
 
-        # Body-frame linear velocity: direct speed/direction signal for thrust control
-        drone_lin_vel_b = self.env._robot.data.root_com_lin_vel_b   # (N, 3)
+        # 36D observation matching real-world controller_simple_policy.py (Vineet format)
+        # for zero-shot sim2real transfer. Components:
+        #   body-frame linear velocity (3) + rotation matrix (9) +
+        #   current gate 4 corners in body frame (12) + next gate 4 corners in body frame (12)
 
-        # Body-frame angular velocity (body rates): essential for attitude stabilization
-        drone_ang_vel_b = self.env._robot.data.root_ang_vel_b       # (N, 3)
+        curr_idx = self.env._idx_wp % self.env._waypoints.shape[0]
+        next_idx = (self.env._idx_wp + 1) % self.env._waypoints.shape[0]
 
-        # Gravity vector projected into body frame: encodes roll and pitch tilt compactly.
-        rot_mat_obs = matrix_from_quat(self.env._robot.data.root_quat_w)  # (N, 3, 3)
-        gravity_b = -rot_mat_obs[:, 2, :]                                  # (N, 3)
+        wp_curr_pos = self.env._waypoints[curr_idx, :3]
+        wp_next_pos = self.env._waypoints[next_idx, :3]
+        quat_curr = self.env._waypoints_quat[curr_idx]
+        quat_next = self.env._waypoints_quat[next_idx]
 
-        # Current target gate: drone position in gate's local frame.
-        drone_pos_gate_frame = self.env._pose_drone_wrt_gate          # (N, 3)
+        rot_curr = matrix_from_quat(quat_curr)
+        rot_next = matrix_from_quat(quat_next)
 
-        # Next gate look-ahead (gate+1): lets the policy plan smooth racing lines
-        num_gates_obs = self.env._waypoints.shape[0]
-        next_gate_idx = (self.env._idx_wp + 1) % num_gates_obs
-        drone_pos_next_gate_frame, _ = subtract_frame_transforms(
-            self.env._waypoints[next_gate_idx, :3],
-            self.env._waypoints_quat[next_gate_idx, :],
-            self.env._robot.data.root_link_pos_w,
-        )  # (N, 3)
+        # Compute 4 corner vertices of current and next gate in world frame
+        # local_square: [0, +-d, +-d] rotated by gate orientation + gate position + env origin
+        verts_curr = torch.bmm(self.env._local_square, rot_curr.transpose(1, 2)) + wp_curr_pos.unsqueeze(1) + self.env._terrain.env_origins.unsqueeze(1)
+        verts_next = torch.bmm(self.env._local_square, rot_next.transpose(1, 2)) + wp_next_pos.unsqueeze(1) + self.env._terrain.env_origins.unsqueeze(1)
 
-        # Second look-ahead (gate+2): critical for horizontal arc setup and chicane planning
-        next_next_gate_idx = (self.env._idx_wp + 2) % num_gates_obs
-        drone_pos_next_next_gate_frame, _ = subtract_frame_transforms(
-            self.env._waypoints[next_next_gate_idx, :3],
-            self.env._waypoints_quat[next_next_gate_idx, :],
-            self.env._robot.data.root_link_pos_w,
-        )  # (N, 3)
+        # Transform gate corners into drone body frame (matches real controller's _subtract_frame_transforms)
+        waypoint_pos_b_curr, _ = subtract_frame_transforms(
+            self.env._robot.data.root_link_state_w[:, :3].repeat_interleave(4, dim=0),
+            self.env._robot.data.root_link_state_w[:, 3:7].repeat_interleave(4, dim=0),
+            verts_curr.view(-1, 3)
+        )
+        waypoint_pos_b_next, _ = subtract_frame_transforms(
+            self.env._robot.data.root_link_state_w[:, :3].repeat_interleave(4, dim=0),
+            self.env._robot.data.root_link_state_w[:, 3:7].repeat_interleave(4, dim=0),
+            verts_next.view(-1, 3)
+        )
+        waypoint_pos_b_curr = waypoint_pos_b_curr.view(self.num_envs, 4, 3)
+        waypoint_pos_b_next = waypoint_pos_b_next.view(self.num_envs, 4, 3)
 
-        # Gate normal direction in body frame: tells agent which direction to fly through gate.
-        # Essential for disambiguating gates 3 vs 6 (same physical gate, opposite directions).
-        gate_normal_w = -self.env._normal_vectors[self.env._idx_wp]  # (N, 3) negated: points in traversal direction
-        gate_normal_b = torch.bmm(
-            rot_mat_obs.transpose(1, 2), gate_normal_w.unsqueeze(-1)
-        ).squeeze(-1)  # (N, 3)
-
-        # Scalar distance to current gate: easier for value function estimation
-        dist_to_gate = torch.linalg.norm(
-            self.env._pose_drone_wrt_gate, dim=1, keepdim=True
-        )  # (N, 1)
-
-        # Height above ground: helps takeoff from ground starts and avoid floor crashes
-        height = self.env._robot.data.root_link_pos_w[:, 2:3]  # (N, 1)
-
-        # Lap progress: fraction through current lap for value estimation over 3-lap horizon
-        lap_progress = (
-            (self.env._n_gates_passed.float() % num_gates_obs) / num_gates_obs
-        ).unsqueeze(-1)  # (N, 1)
-
-        # Previous policy outputs (CTBR): temporal context for smooth control
-        prev_actions = self.env._previous_actions                     # (N, 4)
-
-        # Velocity toward current gate (scalar): helps policy optimize approach speed
-        vel_toward_gate_obs = torch.sum(
-            drone_lin_vel_b * gate_normal_b, dim=1, keepdim=True
-        )  # (N, 1)
-
-        # Arc phase indicator: normalized to [0, 1], disambiguates horizontal arc position
-        arc_phase_obs = (self._arc_phase.float() / 3.0).unsqueeze(-1)  # (N, 1)
-
-        # Normalized episode time: helps value function estimate remaining time budget
-        episode_time_frac = (
-            self.env.episode_length_buf.float() / self.env.max_episode_length
-        ).unsqueeze(-1)  # (N, 1)
+        # Drone rotation matrix (matches real-world Vicon state['R'])
+        quat_w = self.env._robot.data.root_quat_w
+        attitude_mat = matrix_from_quat(quat_w)
 
         # TODO ----- END -----
 
         obs = torch.cat(
             # TODO ----- START ----- List your observation tensors here to be concatenated together
             [
-                drone_lin_vel_b,                # 3  body-frame linear velocity
-                drone_ang_vel_b,                # 3  body-frame angular velocity
-                gravity_b,                      # 3  gravity in body frame
-                drone_pos_gate_frame,           # 3  drone pos in current gate frame
-                drone_pos_next_gate_frame,      # 3  drone pos in next gate frame
-                drone_pos_next_next_gate_frame, # 3  drone pos in gate+2 frame
-                gate_normal_b,                  # 3  gate normal in body frame
-                dist_to_gate,                   # 1  scalar distance to gate
-                height,                         # 1  altitude
-                lap_progress,                   # 1  fraction through current lap
-                prev_actions,                   # 4  previous CTBR output
-                vel_toward_gate_obs,            # 1  velocity toward gate (scalar)
-                arc_phase_obs,                  # 1  arc phase indicator [0, 1]
-                episode_time_frac,              # 1  normalized episode time
+                self.env._robot.data.root_com_lin_vel_b,                      # 3  body-frame linear velocity
+                attitude_mat.view(attitude_mat.shape[0], -1),                 # 9  rotation matrix (row-major)
+                waypoint_pos_b_curr.view(waypoint_pos_b_curr.shape[0], -1),   # 12 current gate corners in body frame
+                waypoint_pos_b_next.view(waypoint_pos_b_next.shape[0], -1),   # 12 next gate corners in body frame
             ],
             # TODO ----- END -----
             dim=-1,
         )
         observations = {"policy": obs}
+
+        # Yaw tracking (used internally by rewards, not part of obs)
+        rpy = euler_xyz_from_quat(quat_w)
+        yaw_w = wrap_to_pi(rpy[2])
+        delta_yaw = yaw_w - self.env._previous_yaw
+        self.env._previous_yaw = yaw_w
+        self.env._yaw_n_laps += torch.where(delta_yaw < -np.pi, 1, 0)
+        self.env._yaw_n_laps -= torch.where(delta_yaw > np.pi, 1, 0)
+        self.env.unwrapped_yaw = yaw_w + 2 * np.pi * self.env._yaw_n_laps
+        self.env._previous_actions = self.env._actions.clone()
 
         return observations
 
@@ -705,27 +689,26 @@ class DefaultQuadcopterStrategy:
                 default_root_state[gs_ids, 3:7] = quat_gs
 
             # ----------------------------------------------------------------
+            # Horizontal arc starts enabled for powerloop (gates 3 & 6 colocated).
+            # ----------------------------------------------------------------
             # Horizontal arc starts: 30% of resets spawn near gate 2 exit
             # with target=gate 3. Velocity has +X (rightward into arc) and
             # -Y (post-gate-2 momentum) components for the clockwise arc.
             # 0.375 of non-ground resets ≈ 30% of total.
-            # ----------------------------------------------------------------
             arc_mask = (~ground_start_mask) & (torch.rand(n_reset, device=self.device) < 0.375)
             arc_ids = arc_mask.nonzero(as_tuple=True)[0]
             n_arc = len(arc_ids)
             if n_arc > 0:
                 waypoint_indices[arc_ids] = 3  # target gate 3
                 gate2_pos = self.env._waypoints[2, :3]
-                # Spawn just past gate 2 exit with slight offsets
                 default_root_state[arc_ids, 0] = gate2_pos[0] + torch.empty(n_arc, device=self.device).uniform_(-0.2, 0.4)
                 default_root_state[arc_ids, 1] = gate2_pos[1] + torch.empty(n_arc, device=self.device).uniform_(-0.8, -0.1)
                 default_root_state[arc_ids, 2] = torch.empty(n_arc, device=self.device).uniform_(0.5, 1.0)
-                # Post-gate-2 velocity: +X (rightward into arc) and -Y (through-gate momentum)
                 default_root_state[arc_ids, 7] = torch.empty(n_arc, device=self.device).uniform_(0.0, 1.5)
                 default_root_state[arc_ids, 8] = torch.empty(n_arc, device=self.device).uniform_(-2.0, -0.5)
                 default_root_state[arc_ids, 9] = torch.empty(n_arc, device=self.device).uniform_(-0.5, 0.5)
                 default_root_state[arc_ids, 10:] = 0.0
-                yaw_arc = torch.empty(n_arc, device=self.device).uniform_(-0.3, 0.8)  # biased toward +X
+                yaw_arc = torch.empty(n_arc, device=self.device).uniform_(-0.3, 0.8)
                 quat_arc = quat_from_euler_xyz(
                     torch.zeros(n_arc, device=self.device),
                     torch.zeros(n_arc, device=self.device),
@@ -795,6 +778,7 @@ class DefaultQuadcopterStrategy:
             self.env._pose_drone_wrt_gate[env_ids], dim=1
         )
 
+        # Arc distance init enabled for powerloop (gates 3 & 6 colocated)
         # For arc spawns (target=gate3), init distance to ARC_WP1
         if self.cfg.is_train and isinstance(waypoint_indices, torch.Tensor):
             is_gate3 = (waypoint_indices == 3)

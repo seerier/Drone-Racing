@@ -1,0 +1,33 @@
+# CMake config file for crazyflie-link-cpp
+# Defines the imported target crazyflieLinkCpp::crazyflieLinkCpp
+# Includes absolute paths to dependencies found during configuration.
+
+@PACKAGE_INIT@
+
+# Dependencies were found during configuration.
+# We directly use the paths passed via configure_package_config_file (PATH_VARS).
+
+# Include the targets file (defines crazyflieLinkCpp::crazyflieLinkCpp)
+include("${CMAKE_CURRENT_LIST_DIR}/@PROJECT_NAME@Targets.cmake")
+
+# Add dependency include dirs and link libraries to the main target interface
+# Note: This assumes crazyflieLinkCpp::crazyflieLinkCpp is an INTERFACE library
+# or that modifying its properties affects downstream users correctly.
+# If crazyflieLinkCpp::crazyflieLinkCpp is SHARED/STATIC, these might already be encoded.
+# This part might need adjustment based on the exact nature of the exported target.
+
+if(TARGET crazyflieLinkCpp::crazyflieLinkCpp AND NOT TARGET PkgConfig::LibUSB)
+  # Only add if the target exists and pkg-config didn't already create an imported target for libusb
+  # Add include directories from dependencies
+  set_property(TARGET crazyflieLinkCpp::crazyflieLinkCpp APPEND PROPERTY
+      INTERFACE_INCLUDE_DIRECTORIES "${LIBUSB_INSTALL_INTERFACE_INCLUDE_DIRS}"
+  )
+  # Add link libraries from dependencies
+  set_property(TARGET crazyflieLinkCpp::crazyflieLinkCpp APPEND PROPERTY
+      INTERFACE_LINK_LIBRARIES "${LIBUSB_INSTALL_INTERFACE_LIBRARIES}"
+  )
+endif()
+
+
+# Check if the main library target exists
+check_required_components("@PROJECT_NAME@")

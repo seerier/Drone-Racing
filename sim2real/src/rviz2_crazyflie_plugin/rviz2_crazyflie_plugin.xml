@@ -1,0 +1,5 @@
+<library path="rviz2_crazyflie_plugin">
+  <class name="CrazyfliePanel" type="rviz2_crazyflie_plugin::CrazyfliePanel" base_class_type="rviz_common::Panel">
+    <description>RViz2 panel for using Crazyflie drone</description>
+  </class>
+</library>

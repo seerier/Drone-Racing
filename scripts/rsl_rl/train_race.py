@@ -106,43 +106,40 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     log_dir = os.path.join(log_root_path, log_dir)
 
     # TODO ----- START ----- Define rewards scales
+    # === Circle track: safe & slow policy for zero-shot sim2real ===
+    # Prioritize gate passage and progress; minimize speed incentives.
+
     # Gate passage: large sparse reward — the primary training signal.
     gate_pass_reward_scale = 15.0
 
     # Progress (potential-based shaping): dense gradient between gate passages.
     progress_goal_reward_scale = 2.0
 
-    # Velocity toward gate: incentivises fast racing.
-    velocity_gate_reward_scale = 0.5
+    # Velocity toward gate: moderate — encourage forward progress, not reckless speed.
+    velocity_gate_reward_scale = 0.3
 
     # Crash penalty: per-timestep contact-force penalty.
     crash_reward = -0.5
 
     # Death cost: terminal penalty on fatal termination.
-    # Reduced from -15 to -5: cheap death encourages exploration of risky zones
-    # (e.g. powerloop after gate 2) while wrong_side (-15) stays expensive.
     death_cost = -5.0
 
     # Wrong-side gate entry: heavy penalty + episode termination to prevent DQ.
     wrong_side_reward_scale = -15.0
 
-    # Gate speed bonus: rewards velocity aligned with gate normal at passage.
-    gate_speed_bonus_reward_scale = 1.0
+    # Gate speed bonus: light bonus for clean fast passes through gate center.
+    gate_speed_bonus_reward_scale = 0.3
 
-    # Time penalty: small per-step cost to encourage speed over caution.
-    time_penalty_reward_scale = -0.05
+    # Time penalty: mild pressure to avoid loitering but not rush.
+    time_penalty_reward_scale = -0.02
 
     # Angular velocity penalty: penalize excessive body rates for stability.
     ang_vel_penalty_reward_scale = -0.01
 
-    # Wrong-side proximity: dense penalty for approaching gate from exit side.
-    # Reduced from -2.0 to -0.5: gentler nudge avoids creating a fear barrier at gate planes.
-    # 3-stage curriculum in strategies.py disables this entirely for iter 0-500.
+    # Wrong-side proximity: gentle nudge, still useful for circle track.
     wrong_side_prox_reward_scale = -0.5
 
-    # Exit repulsion: repulsive penalty near exit side of ALL gates (not just current target).
-    # Prevents brush-and-turn exploit at gates 2→3 and elsewhere.
-    # Reduced from -3.0 to -0.5: soft discouragement, not a wall.
+    # Exit repulsion: soft discouragement near exit side of gates.
     exit_repulsion_reward_scale = -0.5
 
     rewards = {
