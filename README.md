@@ -39,11 +39,11 @@ https://github.com/user-attachments/assets/20d34114-196e-410d-8120-a9f9068dbfe0
 
 ## What I Built
 
-- **Full circuit completion** -- the agent reliably completes all 21 gate passages (3 laps) at high speed
-- **Solved the shared-gate problem** -- gates 3 and 6 occupy the same physical position but face opposite directions; I designed a 3-waypoint arc maneuver that lets the agent approach from the correct side each time
-- **10-component reward function** -- mixed sparse gate-passage signals with dense shaping terms, carefully balancing exploration incentives and penalty schedules to avoid reward hacking
-- **Three-stage curriculum** -- independently schedules domain randomization, approach distance, and speed scaling, each progressing at its natural rate to avoid cascading instability
-- **Zero-shot sim-to-real transfer** -- the trained policy flies a physical Crazyflie 2.1 through the full powerloop circuit without any real-world fine-tuning, enabled by domain randomization of thrust, drag, and PID gains across 8,192 parallel environments in Isaac Lab
+- **Full circuit completion in sim and on hardware** -- the agent reliably completes all 21 gate passages (3 laps of a 7-gate powerloop) in Isaac Lab, and the same checkpoint flies a physical Crazyflie 2.1 zero-shot
+- **Solved the shared-gate problem** -- gates 3 and 6 share the same `(x, y, z)` but face opposite directions; a 3-waypoint horizontal arc steers the agent around the colocated pair on the correct side each lap
+- **11-component reward function** -- sparse gate-passage signals plus dense progress, velocity, smoothness, and exit-side penalties, with a 500-iteration warmup before the directional penalties switch on
+- **Three independent curricula** -- domain randomization, approach distance, and speed scaling each progress on their own schedule, decoupled to avoid cascading instability
+- **Sim-to-real bridge** -- the sim emits the same 36D body-frame "Vineet" observation that the real Crazyflie controller reconstructs from VICON, and the same `[512, 512, 256, 128]` ELU MLP runs on both ends — no fine-tuning, no distillation
 
 ---
 
@@ -51,112 +51,135 @@ https://github.com/user-attachments/assets/20d34114-196e-410d-8120-a9f9068dbfe0
 
 ### Environment and Task
 
-The environment is built on **NVIDIA Isaac Lab** (Isaac Sim 4.5), which provides GPU-accelerated rigid-body simulation, parallel scene rendering, and USD-based asset composition. This enables training across 8,192 environments simultaneously on a single GPU — each with independent physics, randomized dynamics, and gate configurations. The track is a 7-gate "powerloop" circuit; the agent must pass all gates in order for 3 laps.
+The environment is built on **NVIDIA Isaac Lab** (Isaac Sim 4.5), which provides GPU-accelerated rigid-body simulation, parallel scene rendering, and USD-based asset composition. The track (`quadcopter_env.py:416-424`) is a 7-gate `powerloop` circuit where gates 3 and 6 sit at the same `(0.625, 0, 0.75)` position with opposite yaw, forcing the agent to thread the same physical opening from two different directions on each lap. An evaluation episode is 3 full laps = 21 gate passages.
 
 | | |
 |---|---|
-| **Simulation platform** | NVIDIA Isaac Lab (Isaac Sim 4.5) |
-| **Action space** | 4D continuous -- Collective Thrust + Body Rates (CTBR) |
-| **Observation space** | 31-dimensional (ego state, 3-gate lookahead, arc guidance, temporal context) |
-| **Parallel envs** | 8,192 |
-| **Policy rate** | 50 Hz |
+| **Simulation platform** | NVIDIA Isaac Lab (Isaac Sim 4.5), USD scene composition |
+| **Action space** | 4D continuous CTBR (collective thrust + roll/pitch/yaw body rates), clamped to [-1, 1] |
+| **Body-rate scaling** | ±100°/s roll, ±100°/s pitch, ±200°/s yaw (matches the Crazyflie `crtpRateSetpoint`, deg/s — *not* rad/s) |
+| **Observation space** | 36D Vineet body-frame format -- identical in sim and on the real drone |
+| **Default parallel envs** | 4,096 (config); training runs use 8,192 on an A40 |
+| **Sim rate / policy rate / inner PID rate** | 500 Hz / 50 Hz / 500 Hz |
+| **Episode length** | 30 s (1,500 policy steps) |
 
-I chose CTBR over position control because direct thrust and body-rate commands enable the aggressive maneuvers (sharp banking, rapid altitude changes) that racing demands.
+CTBR was chosen over position control because direct thrust and body-rate commands let the policy execute the sharp banking and altitude transitions a powerloop demands; the inner PID still runs at 500 Hz on the IMU loop.
 
-The 31-dimensional observation includes body-frame velocities, gate-relative positions for the next 3 gates, the current gate's approach direction, distance and altitude, lap progress, previous actions, and an arc phase signal. Gate-relative encoding makes the observation invariant to global position, improving generalization across gates.
+The 36D observation (`quadcopter_strategies.py:416-475`) is constructed identically in sim and on the real drone, which is what makes zero-shot transfer possible:
+
+| Block | Dim | Source in sim | Source on real Crazyflie |
+|---|---|---|---|
+| Body-frame linear velocity | 3 | `root_com_lin_vel_b` | VICON-derived `state['v_b']` |
+| Rotation matrix (row-major) | 9 | `matrix_from_quat(root_quat_w)` | VICON-derived `state['R']` |
+| Current gate, 4 corner positions in body frame | 12 | gate verts → `subtract_frame_transforms` | identical numpy reimplementation |
+| Next gate, 4 corner positions in body frame | 12 | same as above | same |
+
+Encoding gate **corners** rather than centers gives the policy direct geometric cues for size, orientation, and aperture — and stays well-defined even when the drone is inside a gate plane.
 
 ### Reward Design
 
-I designed a 10-component reward function from scratch, mixing sparse gate-passage signals with dense shaping terms:
+The reward dictionary is assembled in `train_race.py:108-158`; the per-component formulas live in `quadcopter_strategies.py:get_rewards`. Action smoothness is added on top of the dictionary sum.
 
-**Sparse Rewards**
-
-| Component | Scale | Formula | Rationale |
-|---|---|---|---|
-| Gate pass | +15.0 | Binary trigger on correct-side passage within aperture | Primary training signal — large to dominate over dense shaping noise |
-| Gate speed bonus | 1.0 | `v² / 10`, clamped [0, 10] | Rewards aggressive traversals; quadratic scaling incentivizes high-speed entries |
-
-**Dense Shaping**
+**Sparse**
 
 | Component | Scale | Formula | Rationale |
 |---|---|---|---|
-| Progress toward gate | 2.0 | `clamp(d_{t-1} - d_t, -5, 5)`; 1.5x boost during arc | Potential-based shaping — dense gradient between sparse gate rewards |
-| Velocity toward gate | 0.5 | `clamp(v · dir, -5, 10)`; scaled by speed curriculum | Encourages fast racing; curriculum-gated to avoid premature aggression |
-| Time penalty | -0.05 | Constant per step; curriculum ramps 0.5x to 1.5x | Small cost that grows over training to push speed over caution |
-| Angular velocity penalty | -0.01 | `-||omega_body||` | Discourages excessive spinning for flight stability |
-| Crash penalty | -0.5 | Triggered when contact force > 1e-8 N | Per-timestep contact penalty |
-| Wrong-side proximity | -0.5 | Dense penalty for approaching gate from exit side | Gentle nudge (reduced from -2.0) to avoid creating a fear barrier at gate planes |
-| Exit-side repulsion | -0.5 | Repulsive field near exit side of ALL gates | Prevents brush-and-turn exploits at gates 2→3 and elsewhere |
-| Action smoothness | -0.03 | `-0.03 × ||a_t - a_{t-1}||` (added directly) | Reduces actuator jitter for policy robustness |
+| Gate pass | +15.0 | Triggers when gate-frame x crosses positive→non-positive within the 1.0 m aperture | Primary training signal — large enough to dominate dense shaping noise |
+| Gate speed bonus | +0.3 | `(clamp(-v · n_gate, 0, 10))² / 10`, applied at the moment of passage | Quadratic in passage speed; peaks at +0.3 × 10 = +3 for a 10 m/s clean traversal |
 
-**Terminal Rewards**
+**Dense shaping**
+
+| Component | Scale | Formula | Notes |
+|---|---|---|---|
+| Progress toward gate | +2.0 | `clamp(d_{t-1} - d_t, -5, 5)`; multiplied by 1.5 while in the arc | Potential-based shaping — gives a dense gradient between sparse gate rewards |
+| Velocity toward gate | +0.3 | `clamp(v · dir_to_gate, -5, 10) × speed_curriculum` | Curriculum-scaled 0.5×→1.5× over 3,000 iter |
+| Time penalty | -0.02 | Constant per step, scaled 0.5×→1.5× by speed curriculum | Small cost that grows over training to push speed over loitering |
+| Angular-velocity penalty | -0.01 | `-‖ω_body‖` | Discourages excessive spinning |
+| Crash penalty | -0.5 | Per step where contact-sensor force > 1e-8 N (after the first 100 steps) | Per-timestep contact penalty, accumulates into termination at 100 hits |
+| Wrong-side proximity | -0.5 | `(curr_x < 0) × clamp(1 - d/3, 0, 1)`; only after iter 500 | Gentle nudge against approaching the current gate from its exit side |
+| Exit-side repulsion | -0.5 | Same form, applied to **every** non-target gate; only after iter 500 | Prevents brush-and-turn exploits across the whole circuit |
+| Action smoothness | -0.03 | `-0.03 × ‖a_t - a_{t-1}‖`, added directly to the per-step reward | Reduces actuator jitter, important for sim-to-real |
+
+**Terminal**
 
 | Event | Reward | Rationale |
 |---|---|---|
-| Death (crash / out of bounds) | -5.0 | Intentionally cheap — encourages exploration of risky zones (e.g., the powerloop after gate 2) |
-| Wrong-side gate entry | -15.0 (stacks with death: -20 total) | Must be much more expensive than crashing, otherwise the agent learns to exploit wrong-side passages as a "cheaper" alternative |
+| Death (crash / altitude bound / off-track) | -5.0 | Intentionally cheap so the agent still explores risky zones like the post-gate-2 transition |
+| Wrong-side gate entry (any gate, distance < 1 m) | -15.0, stacks with death (-20 total) and **terminates the episode** | Wrong-side passes are a DQ at evaluation; must be strictly worse than a crash so the policy never trades them |
 
-**Dense Penalty Warmup:** Wrong-side proximity and exit-side repulsion are disabled for the first 500 iterations. This lets the agent discover gate-passing behavior without a fear barrier, then the penalties activate to shape approach trajectories.
+**Dense-penalty warmup.** Both directional penalties (`wrong_side_prox`, `exit_repulsion`) are gated by `iter >= 500`. This lets the agent discover gate-passing behavior without a "fear barrier" near gate planes during initial exploration; the warmup ends once the policy reliably finds gates, after which the penalties shape approach geometry. Termination on wrong-side entry is always on, so the warmup never opens an exploit.
 
 ### Curriculum Learning
 
-I designed three independent curricula that each progress at their natural rate:
+Three independent curricula, each on its own iteration schedule (`quadcopter_strategies.py:reset_idx`, `get_rewards`):
 
-| Curriculum | Start | End | Duration | Why |
+| Curriculum | Start | End | Duration | Why this schedule |
 |---|---|---|---|---|
-| Domain randomization | 20% range | 100% range | 2,000 iter | Learn basic flight before perturbed physics |
-| Approach distance | 0.5-1.5 m | 1.2-3.5 m | 2,000 iter | Master close-range accuracy first |
-| Speed scaling | 0.5x | 1.5x | 3,000 iter | Route learning before speed optimization |
+| Domain randomization width | 20 % of full range | 100 % of full range | 2,000 iter | Learn basic flight on near-nominal physics first; widen perturbations only once the policy is competent |
+| Reset approach distance | 0.5–1.5 m | 1.2–3.5 m | 2,000 iter | Close-range gate accuracy first, then long approaches |
+| Speed scaling (velocity reward + time penalty) | 0.5× | 1.5× | 3,000 iter | Route learning before speed optimization; finishes *after* DR so the policy masters robust dynamics before racing at full speed |
 
-Decoupling these was a key design decision -- coupling them caused training instability when one axis became too difficult before the others were ready. The speed curriculum deliberately finishes after DR, so the agent masters robust dynamics before racing at full speed.
+Decoupling matters: when these were coupled in earlier iterations, one axis becoming too hard before the others stalled training entirely.
 
-### Key Innovation: Arc Maneuver
+### Key Innovation: Horizontal Arc Maneuver
 
-Gates 3 and 6 occupy the same physical position but face opposite directions. A naive policy targeting the next gate's position gets confused here -- the positional signal is identical for both passages.
+Gates 3 and 6 occupy the same `(x, y, z)`. A policy that just chases gate 3's center after passing gate 2 either flies straight back into gate 6 or learns a wrong-side pass and gets terminated. The fix is a **reward-shaping override** that steers the agent through a clockwise horizontal arc at constant altitude before re-entering gate 3 from the +Y side.
 
-I solved this with a 3-waypoint clockwise arc at constant altitude. The observation space includes an arc phase signal that guides the agent through intermediate waypoints around the shared gate, ensuring it approaches from the correct direction each time. The arc is encoded as an **observation signal** rather than hard-coded actions, so the policy learns the maneuver shape end-to-end and produces smoother trajectories.
+Three hard-coded waypoints (`quadcopter_strategies.py:238-240`) define the arc:
+
+| Waypoint | Position `(x, y, z)` | Role |
+|---|---|---|
+| WP1 | `(0.6, -0.6, 0.75)` | Pull rightward into the arc start |
+| WP2 | `(1.8, 0.0, 0.75)` | Cross Y=0 at a safe X distance from both gates |
+| WP3 | `(0.625, 0.5, 0.75)` | Set up the gate-3 approach from +Y |
+
+The arc is implemented as **reward shaping, not as an observation signal** — the policy never sees a phase variable. When the target is gate 3 *and* the drone is on gate 3's exit side (`gate3_frame_x < 0`), an arc state machine advances through phases 1→2→3 based on proximity to WP1/WP2, and the `progress` and `velocity_gate` rewards are computed against the active arc waypoint instead of the gate. To stabilise learning, **30 %** of episode resets spawn the drone near gate 2's exit with a +X / -Y momentum and target gate 3, so the arc distribution is well covered.
 
 ### Domain Randomization
 
-To ensure the trained policy is robust to manufacturing tolerances, battery voltage variations, and environmental disturbances, I randomize physical parameters each episode. This domain randomization is what enabled the zero-shot transfer to real Crazyflie hardware shown in the deployment video above:
+Each episode resamples physical parameters from these ranges (scaled by the DR curriculum). This is what makes the zero-shot real-world flight in the video above possible:
 
-| Parameter | Range |
+| Parameter | Range (at full curriculum) |
 |---|---|
-| Thrust-to-weight ratio | +/- 5% |
-| Drag coefficients | 0.5x -- 2.0x |
-| PID gains (proportional, integral) | +/- 15% |
-| PID gains (derivative) | +/- 30% |
+| Thrust-to-weight ratio | nominal ± 5 % |
+| Drag coefficients (XY and Z) | 0.5× — 2.0× |
+| PID gains kp, ki (roll/pitch and yaw) | nominal ± 15 % |
+| PID gains kd (roll/pitch and yaw) | nominal ± 30 % |
 
 ---
 
 ## Architecture and Hyperparameters
 
-I use an asymmetric actor-critic PPO design where the critic is deliberately larger:
+The actor and critic share an identical MLP topology, defined in `agents/rsl_rl_ppo_cfg.py`:
 
-| Network | Architecture | Activation | Rationale |
+| Network | Architecture | Activation | Output |
 |---|---|---|---|
-| **Actor** | 31 -> 256 -> 256 -> 128 -> 4 | ELU + Tanh output | Compact — only needs to map observations to 4D actions |
-| **Critic** | 31 -> 512 -> 512 -> 256 -> 128 -> 1 | ELU | 3x more parameters — value estimation across a 21-gate circuit with curriculum-dependent dynamics is a harder regression problem than the policy itself |
+| **Actor** | 36 → 512 → 512 → 256 → 128 → 4 | ELU (hidden) | Tanh, then PPO-Gaussian noise (init std 0.8 → min 0.01) |
+| **Critic** | 36 → 512 → 512 → 256 → 128 → 1 | ELU (hidden) | linear |
+
+The actor is what gets shipped to the real Crazyflie — exact same architecture, exact same input layout, weights loaded from the trained checkpoint (`sim2real/src/controller/controller/controller_simple_policy.py:Actor`).
 
 ### PPO Hyperparameters
 
-| Parameter | Value | Rationale |
+| Parameter | Value | Notes |
 |---|---|---|
-| Parallel environments | 8,192 | Massive parallelism for stable gradient estimation |
-| Steps per env per update | 64 | ~1.3s at 50 Hz; sufficient horizon for GAE |
-| Mini-batches | 8 | ~65K samples each, balancing compute and gradient noise |
+| Parallel environments | 8,192 (training) / 4,096 (config default) | A40 fits 8,192 comfortably |
+| Steps per env per update | 64 | ~1.28 s at 50 Hz; sufficient horizon for GAE |
+| Mini-batches | 8 | ~65k samples each |
 | Learning epochs | 5 | |
-| Learning rate | 3e-4 | Adaptive schedule via KL divergence targeting |
-| Clip range (epsilon) | 0.2 | Standard PPO clipping |
-| Entropy coefficient | 0.008 | Maintains exploration for diverse racing lines |
-| Discount (gamma) | 0.997 | Half-life ~4.6s at 50 Hz; credits rewards 100+ steps ahead for long-horizon lap optimization |
-| GAE lambda | 0.95 | |
-| Desired KL | 0.008 | LR auto-reduces when policy updates become too aggressive |
-| Max gradient norm | 1.0 | Gradient clipping for training stability |
-| Initial noise std | 0.8 | Wide initial exploration over the action space |
-| Minimum noise std | 0.01 | Prevents premature convergence to deterministic policy |
+| Learning rate | 3e-4 | Adaptive schedule via target KL |
+| Clip range | 0.2 | Standard PPO |
+| Entropy coefficient | 0.008 | Keeps exploration alive late in training |
+| Value-loss coefficient | 1.0 | |
+| Discount γ | 0.997 | ~4.6 s half-life at 50 Hz; credits rewards ~230 steps ahead |
+| GAE λ | 0.95 | |
+| Desired KL | 0.008 | LR auto-reduces when policy updates outpace this |
+| Max gradient norm | 1.0 | |
+| Initial noise std | 0.8 | Wide initial action exploration |
+| Minimum noise std | 0.01 | Prevents premature convergence to a deterministic policy |
+| Default `max_iterations` | 20,000 | Typical runs use 5k–8k |
 
-**Effective batch size:** 8,192 envs x 64 steps = **524,288 transitions per update**.
+**Effective batch size:** 8,192 envs × 64 steps = **524,288 transitions per update**.
 
 ---
 
@@ -164,61 +187,61 @@ I use an asymmetric actor-critic PPO design where the critic is deliberately lar
 
 ```
 DroneRacing/
-├── pyproject.toml                             # Project metadata and Isaac Lab dependencies
-├── setup.py                                   # Package installation
-├── LICENSE                                    # BSD-3-Clause
+├── pyproject.toml                              # Project metadata and Isaac Lab dependencies
+├── setup.py                                    # Package installation
+├── LICENSE                                     # BSD-3-Clause
+│
 ├── config/
-│   └── extension.toml                         # Isaac Lab extension registration
+│   └── extension.toml                          # Isaac Lab extension registration
 │
 ├── scripts/
 │   ├── rsl_rl/
-│   │   ├── train_race.py                      # Training entry point — reward scales, env init, PPO runner
-│   │   ├── play_race.py                       # Evaluation — checkpoint loading, video recording, model export
-│   │   ├── cli_args.py                        # CLI argument parsing for RSL-RL integration
-│   │   └── batch_training.sh                  # Multi-seed batch training (3 seeds)
-│   ├── slurm/
-│   │   ├── train.sh                           # SLURM GPU job submission for training
-│   │   └── play.sh                            # SLURM job submission for evaluation
+│   │   ├── train_race.py                       # Training entry — reward scales, env init, PPO runner
+│   │   ├── play_race.py                        # Evaluation — checkpoint load, video, JIT/ONNX export
+│   │   └── cli_args.py                         # RSL-RL CLI argument plumbing
+│   ├── slurm/                                  # SLURM submission scripts (Penn GRASP cluster)
 │   └── util/
-│       ├── env.sh                             # Environment setup (Isaac Sim 4.5 installation)
-│       ├── drone_run.sh                       # Convenience launcher for training
-│       └── drone_play.sh                      # Convenience launcher for evaluation
+│       ├── env.sh                              # Environment setup (Isaac Sim 4.5)
+│       ├── drone_run.sh                        # Convenience launcher for training
+│       └── drone_play.sh                       # Convenience launcher for evaluation
 │
 ├── results/
-│   ├── powerloop.mp4                          # Real-world Crazyflie 2.1 powerloop deployment (Stage 3)
-│   ├── featured.png                           # Thumbnail for the deployment video
-│   ├── horizontal.mp4                         # Sim — horizontal bypass approach
-│   ├── vertical.mp4                           # Sim — vertical bypass approach
-│   ├── bestcircle.mp4                         # Sim — Phase 2 Stage 1 circle track
-│   └── circlereal.mp4                         # Real — Phase 2 Stage 2 circle track
+│   ├── powerloop.mp4                           # Real-world Crazyflie 2.1 powerloop deployment (Stage 3)
+│   ├── featured.png                            # Thumbnail for the deployment video
+│   ├── horizontal.mp4                          # Sim — horizontal bypass approach
+│   ├── vertical.mp4                            # Sim — vertical bypass approach
+│   ├── bestcircle.mp4                          # Sim — Phase 2 Stage 1 circle track
+│   └── circlereal.mp4                          # Real — Phase 2 Stage 2 circle track
 │
 ├── src/
-│   ├── isaac_quad_sim2real/                    # Custom Isaac Lab extension
+│   ├── isaac_quad_sim2real/                    # Custom Isaac Lab extension (Direct RL)
 │   │   └── tasks/race/config/crazyflie/
-│   │       ├── quadcopter_env.py              # Environment — rigid-body physics, PID control, gate geometry
-│   │       ├── quadcopter_strategies.py       # Strategy — reward computation, observations, resets, curricula, arc maneuver
+│   │       ├── quadcopter_env.py               # Environment — rigid-body sim, motor + PID, gate geometry, tracks
+│   │       ├── quadcopter_strategies.py        # Strategy — rewards, 36D observations, resets, curricula, arc state machine
 │   │       └── agents/
-│   │           ├── rl_cfg.py                  # Base RL configuration dataclasses
-│   │           └── rsl_rl_ppo_cfg.py          # PPO hyperparameters — network architecture, algorithm config
+│   │           ├── rl_cfg.py                   # Base RL config dataclasses
+│   │           └── rsl_rl_ppo_cfg.py           # PPO hyperparameters and actor/critic [512,512,256,128] ELU
 │   │
 │   └── third_parties/
-│       └── rsl_rl_local/                      # Custom RSL-RL v2.2.3 — modified PPO implementation
-│           └── rsl_rl/
-│               ├── algorithms/ppo.py          # PPO algorithm — loss computation, gradient updates
-│               ├── modules/
-│               │   ├── actor_critic.py        # Actor-critic network — policy and value function heads
-│               │   └── normalizer.py          # Input/output normalization utilities
-│               ├── runners/
-│               │   └── on_policy_runner.py    # Training loop — rollout collection, logging, checkpointing
-│               ├── storage/
-│               │   └── rollout_storage.py     # Trajectory buffer — GAE advantage computation
-│               └── utils/
-│                   ├── wandb_utils.py         # Weights & Biases logging integration
-│                   └── utils.py               # General utilities — checkpointing, device management
+│       └── rsl_rl_local/                       # Vendored RSL-RL with project-specific tweaks
+│
+├── sim2real/                                   # ROS2 stack used to deploy the trained policy on hardware
+│   └── src/
+│       ├── controller/controller/
+│       │   ├── controller_simple_policy.py     # Real-world inference — same Actor + 36D obs as sim
+│       │   ├── controller_params.py            # ROS2 YAML param loader (waypoints, body-rate limits, gate_side)
+│       │   ├── controller_node.py              # ROS2 node — subscribes VICON, publishes CTBR
+│       │   └── controller_fsm.py               # Takeoff / armed / racing / land state machine
+│       ├── jirl_bringup/launch/                # ROS2 launch files (controller, vicon, crazyradio)
+│       ├── crazyflie-lib-python/               # Crazyflie radio + crtp protocol (vendored)
+│       ├── crazyradio_driver_cpp/              # Native crazyradio driver
+│       └── motion_capture_system/              # VICON ROS2 bridge
+│   └── bin/
+│       └── process_bag_with_br_pos_export.py   # Post-flight rosbag analysis (sim-vs-real plots)
 │
 └── usd/
-    ├── cf2x.usda                              # Crazyflie 2.1 quadrotor USD model (physics, mesh, joints)
-    └── gate.usda                              # Racing gate USD mesh
+    ├── cf2x.usda                               # Crazyflie 2.1 USD model (physics, meshes, joints)
+    └── gate.usda                               # Racing gate USD mesh
 ```
 
 ---
@@ -229,7 +252,7 @@ DroneRacing/
 
 - NVIDIA Isaac Lab (Isaac Sim 4.5+)
 - Python 3.10+
-- CUDA GPU with sufficient VRAM for 8,192 parallel environments
+- CUDA GPU with sufficient VRAM for thousands of parallel environments (training was done on a single A40)
 
 ### Train
 
@@ -237,11 +260,13 @@ DroneRacing/
 python scripts/rsl_rl/train_race.py \
     --task Isaac-Quadcopter-Race-v0 \
     --num_envs 8192 \
-    --max_iterations 5000 \
-    --headless
+    --max_iterations 8000 \
+    --headless --logger wandb
 ```
 
-### Evaluate
+Reward scales live in `scripts/rsl_rl/train_race.py`. Network architecture and PPO hyperparameters live in `src/isaac_quad_sim2real/tasks/race/config/crazyflie/agents/rsl_rl_ppo_cfg.py`. Track choice (`powerloop`, `circle`, `lemniscate`, `complex`) is set by `track_name` in `quadcopter_env.py`.
+
+### Evaluate in sim and export the policy
 
 ```bash
 python scripts/rsl_rl/play_race.py \
@@ -249,19 +274,42 @@ python scripts/rsl_rl/play_race.py \
     --num_envs 1 \
     --load_run <run_dir> \
     --checkpoint best_model.pt \
-    --video
+    --video --video_length 2500
+```
+
+`play_race.py` loads the checkpoint, exports the policy as both **TorchScript (`policy.pt`) and ONNX (`policy.onnx`)** under `<run_dir>/exported/`, then runs the deterministic policy for evaluation video capture.
+
+### Deploy on a real Crazyflie 2.1
+
+The ROS2 controller in `sim2real/src/controller/` consumes the exported checkpoint plus a YAML param file:
+
+```yaml
+gate_side: 1.0
+policy:
+  max_roll_br: 100.0     # deg/s — must match sim body_rate_scale_xy
+  max_pitch_br: 100.0    # deg/s
+  max_yaw_br: 200.0      # deg/s — must match sim body_rate_scale_z
+  initial_waypoint: 0
+  waypoints: [<flat 6*N list of x, y, z, roll, pitch, yaw per gate>]
+```
+
+VICON publishes drone state, the controller node reconstructs the 36D observation in numpy with the exact same layout as the sim, and the policy outputs CTBR commands sent to the Crazyflie via Crazyradio. After a flight, post-process the rosbag with:
+
+```bash
+python sim2real/bin/process_bag_with_br_pos_export.py <bag_path> <crazyflie_id>
 ```
 
 ---
 
 ## Design Decisions
 
-- **Terminal penalty stacking** (-20 for wrong-side vs -5 for crash) prevents the agent from exploiting wrong-side passages as a cheaper alternative to correct approaches
-- **Independent curricula over coupled** -- decoupling distance, speed, and DR schedules lets each progress at its natural rate without cascading instability
-- **All-gate scanning** every timestep prevents agents from "backdooring" non-target gates for free progress reward
-- **Arc phase as observation signal** rather than reward shaping -- produces smoother trajectories since the policy learns the maneuver end-to-end
-- **Asymmetric actor-critic** (3x more critic parameters) stabilizes training for this long-horizon, curriculum-dependent task
+- **Terminal penalty stacking** (−20 for wrong-side vs −5 for plain crash) — the agent never learns to "trade" a wrong-side pass for a cheaper crash, because wrong-side is strictly worse *and* immediately ends the episode.
+- **Independent curricula over coupled** — DR width, approach distance, and speed scaling each progress on their own iteration schedule, so one axis becoming hard never stalls the others.
+- **Dense-penalty warmup until iter 500** — the agent first learns to find gates without a fear barrier near gate planes; directional penalties activate later to shape the *approach geometry*, not gate finding itself.
+- **All-gate wrong-side scanning** — every timestep checks reverse passes through every gate (excluding the current target and any colocated partner), so the policy can never sneak free progress by reversing through earlier gates.
+- **Arc as reward shaping, not as observation** — the 3-waypoint horizontal arc is implemented by re-routing the `progress` and `velocity_gate` rewards through arc waypoints when in arc state, with 30 % of resets spawned in the arc distribution. Keeping the observation pure makes the same 36D format usable on hardware with no extra plumbing.
+- **Symmetric actor and critic** (`[512, 512, 256, 128]` ELU on both) — chosen to keep the deployed actor architecture identical to the trained one; sim-to-real fidelity is more valuable here than a hypothetically better critic.
 
 ---
 
-**Tech Stack:** NVIDIA Isaac Lab (Isaac Sim 4.5) | PyTorch | PPO (RSL-RL) | USD Scene Composition | Crazyflie 2.1
+**Tech Stack:** NVIDIA Isaac Lab (Isaac Sim 4.5) | PyTorch | PPO (RSL-RL, vendored) | USD scene composition | ROS2 + VICON + Crazyradio | Crazyflie 2.1
